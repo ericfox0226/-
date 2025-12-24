@@ -8,15 +8,15 @@ from io import BytesIO
 from datetime import datetime
 
 # --- 頁面配置 ---
-st.set_page_config(page_title="公司零用金系統", layout="centered")
+st.set_page_config(page_title="工地雜支管理系統", layout="centered")
 
-# 自定義 CSS
 st.markdown("""
     <style>
-    div.stButton > button:first-child { width: 100%; height: 3em; font-size: 18px; }
+    div.stButton > button:first-child { width: 100%; height: 3.5em; font-size: 18px; font-weight: bold; }
     .total-preview { 
-        background-color: #f8f9fa; padding: 20px; border-radius: 10px; 
-        text-align: center; border: 2px solid #343a40; margin-bottom: 20px;
+        background-color: #ffffff; padding: 20px; border-radius: 15px; 
+        text-align: center; border: 2px solid #1e88e5; margin-bottom: 25px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -25,170 +25,174 @@ st.markdown("""
 if 'data_list' not in st.session_state:
     st.session_state.data_list = []
 if 'location_options' not in st.session_state:
-    # 預設一些常用工地選項
-    st.session_state.location_options = ["A工地", "B中心", "C住宅"]
+    st.session_state.location_options = ["工務所", "建案 A", "建案 B"]
 
-# --- 側邊欄：選項管理 (新增/刪減) ---
-with st.sidebar:
-    st.header("⚙️ 選項管理")
-    st.subheader("工地清單")
+# --- 輔助函式：排序與自動代號生成 ---
+def process_data_and_mapping(data):
+    """依照日期排序資料，並根據排序後的工地出現順序生成 A-Z 代號"""
+    # 1. 排序
+    def sort_key(item):
+        try: return datetime.strptime(f"{datetime.now().year}/{item['日期']}", "%Y/%m/%d")
+        except: return datetime.max
+    sorted_data = sorted(data, key=sort_key)
     
-    # 新增選項
-    new_loc = st.text_input("新增工地名稱", placeholder="例如：台北大巨蛋")
-    if st.button("➕ 增加至選單"):
+    # 2. 生成代號字典 (Mapping)
+    unique_locations = []
+    for d in sorted_data:
+        if d["工地"] not in unique_locations:
+            unique_locations.append(d["工地"])
+    
+    # chr(65) 是 'A'，依序往後推
+    mapping = {loc: chr(65 + i) for i, loc in enumerate(unique_locations)}
+    return sorted_data, mapping
+
+# --- 側邊欄：管理選單 ---
+with st.sidebar:
+    st.header("⚙️ 選項設定")
+    new_loc = st.text_input("新增常用工地")
+    if st.button("➕ 新增"):
         if new_loc and new_loc not in st.session_state.location_options:
             st.session_state.location_options.append(new_loc)
             st.rerun()
-            
-    st.divider()
     
-    # 刪除選項
-    del_loc = st.selectbox("選擇要刪除的工地", options=st.session_state.location_options)
-    if st.button("🗑️ 刪除該選項"):
+    st.divider()
+    del_loc = st.selectbox("刪除常用工地", options=st.session_state.location_options)
+    if st.button("🗑️ 刪除"):
         if del_loc in st.session_state.location_options:
             st.session_state.location_options.remove(del_loc)
             st.rerun()
 
 # --- 主頁面：總金額預覽 ---
-st.title("📂 雜支明細表自動化系統")
+st.title("📂 雜支明細自動化")
 
 if st.session_state.data_list:
     total_amt = sum(d['金額'] for d in st.session_state.data_list)
-    text_color = "#d32f2f" if total_amt < 0 else "#01579b"
     st.markdown(f"""
         <div class="total-preview">
-            <span style="font-size: 16px; color: #666;">目前累計總餘額</span><br>
-            <span style="font-size: 32px; font-weight: bold; color: {text_color};">NT$ {total_amt:,}</span>
+            <p style="margin:0; color:#666;">目前累計總餘額</p>
+            <h1 style="margin:0; color:{'#d32f2f' if total_amt < 0 else '#1e88e5'};">NT$ {total_amt:,}</h1>
         </div>
     """, unsafe_allow_html=True)
 
-# --- 輸入區塊 ---
-with st.expander("🖋️ 新增資料", expanded=True):
-    today_str = datetime.now().strftime("%m/%d")
-    date_val = st.text_input("日期", value=today_str)
-    content_val = st.text_input("花費內容", placeholder="例如：五金零件、便當")
+# --- 資料輸入區 ---
+with st.expander("🖋️ 快速記帳", expanded=True):
+    date_val = st.text_input("日期", value=datetime.now().strftime("%m/%d"))
+    content_val = st.text_input("項目內容", placeholder="如：五金、餐費")
     
-    col_a, col_b = st.columns(2)
-    with col_a:
-        raw_amount = st.number_input("支出金額 (自動轉負數)", step=1, value=0)
-    with col_b:
-        # 使用下拉選單選擇工地
-        selected_loc = st.selectbox("選擇工地", options=st.session_state.location_options + ["+ 手動輸入"])
-        
-        # 如果選擇手動輸入，顯示輸入框
-        if selected_loc == "+ 手動輸入":
-            final_location = st.text_input("請輸入新工地名稱")
+    col1, col2 = st.columns(2)
+    with col1:
+        # 直接輸入正數，邏輯會轉負數 (支出)
+        raw_amt = st.number_input("金額 (輸入 100 即為支出 100)", step=10, value=0)
+    with col2:
+        loc_choice = st.selectbox("選擇工地", options=st.session_state.location_options + ["+ 手動輸入"])
+        if loc_choice == "+ 手動輸入":
+            final_loc = st.text_input("輸入新工地全名")
         else:
-            final_location = selected_loc
+            final_loc = loc_choice
 
-    if st.button("➕ 新增至清單"):
-        if date_val and content_val and final_location:
-            # 支出預設轉負數邏輯
-            actual_amount = -abs(raw_amount) if raw_amount > 0 else raw_amount
+    if st.button("🚀 新增至清單"):
+        if date_val and content_val and final_loc:
+            # 自動轉負數邏輯：支出預設為負數
+            actual_amt = -abs(raw_amt) if raw_amt > 0 else raw_amt
             st.session_state.data_list.append({
-                "日期": date_val, "內容": content_val, "金額": actual_amount, "工地": final_location
+                "日期": date_val, "內容": content_val, "金額": actual_amt, "工地": final_loc
             })
             st.rerun()
-        else:
-            st.warning("請填寫完整資訊")
 
-# --- 排序與 Word 生成 (維持之前優化的垂直排列與置中邏輯) ---
-def get_sorted_data(data):
-    def sort_key(item):
-        try: return datetime.strptime(f"{datetime.now().year}/{item['日期']}", "%Y/%m/%d")
-        except: return datetime.max
-    return sorted(data, key=sort_key)
-
-def get_location_mapping(sorted_data):
-    unique_locations = []
-    for d in sorted_data:
-        if d["工地"] not in unique_locations:
-            unique_locations.append(d["工地"])
-    return {loc: chr(65 + i) for i, loc in enumerate(unique_locations)}
-
-def export_word(data, mapping):
-    doc = Document()
-    section = doc.sections[0]
-    section.top_margin, section.bottom_margin = Mm(15), Mm(15)
-    section.left_margin, section.right_margin = Mm(15), Mm(15)
+# --- 資料預覽與報表生成 ---
+if st.session_state.data_list:
+    # 核心邏輯：取得排序後的資料與自動生成的 A-Z 對照表
+    sorted_list, loc_mapping = process_data_and_mapping(st.session_state.data_list)
     
-    title = doc.add_paragraph("雜支明細表")
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.runs[0]
-    run.font.size = Pt(18); run.bold = True
-    
-    doc.add_paragraph(f"報告日期：{datetime.now().strftime('%Y/%m/%d')}")
-    doc.add_paragraph(f"經手人：_________________")
+    st.subheader("📊 資料預覽 (已自動編號)")
+    # 預覽表中直接顯示代號，方便核對
+    preview_df = pd.DataFrame([{
+        "日期": d["日期"], "項目": d["內容"], "金額": d["金額"], 
+        "代號": loc_mapping[d["工地"]], "工地全名": d["工地"]
+    } for d in sorted_list])
+    st.table(preview_df)
 
-    rows_per_page = 28 
-    left_side = data[:rows_per_page]
-    right_side = data[rows_per_page:rows_per_page*2]
+    # --- Word 生成邏輯 ---
+    def export_word(data, mapping):
+        doc = Document()
+        # 設定邊距
+        for s in doc.sections:
+            s.top_margin = s.bottom_margin = Mm(15)
+            s.left_margin = s.right_margin = Mm(15)
 
-    table = doc.add_table(rows=1, cols=8)
-    table.style = 'Table Grid'
-    headers = ["日期", "內容", "金額", "工地代號"] * 2
-    for i, h in enumerate(headers):
-        cell = table.rows[0].cells[i]
-        cell.text = h
-        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        cell.paragraphs[0].runs[0].font.bold = True
-
-    last_d_l, last_d_r = None, None
-    for i in range(len(left_side)):
-        row_cells = table.add_row().cells
-        d_l = left_side[i]
-        show_date_l = "" if d_l["日期"] == last_d_l else d_l["日期"]
-        last_d_l = d_l["日期"]
-        l_vals = [show_date_l, d_l["內容"], f"{d_l['金額']:,}", mapping[d_l["工地"]]]
+        # 標題
+        title = doc.add_paragraph("雜支明細表")
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title.runs[0].font.size = Pt(18)
+        title.runs[0].bold = True
         
-        r_vals = ["", "", "", ""]
-        if i < len(right_side):
-            d_r = right_side[i]
-            show_date_r = "" if d_r["日期"] == last_d_r else d_r["日期"]
-            last_d_r = d_r["日期"]
-            r_vals = [show_date_r, d_r["內容"], f"{d_r['金額']:,}", mapping[d_r["工地"]]]
+        doc.add_paragraph(f"報告日期：{datetime.now().strftime('%Y/%m/%d')}")
+        doc.add_paragraph(f"經手人：_________________")
 
-        for idx, val in enumerate(l_vals + r_vals):
-            cell = row_cells[idx]
-            cell.text = str(val)
+        # 垂直排列計算 (左側到底再右側)
+        rows_per_page = 28
+        left_side = data[:rows_per_page]
+        right_side = data[rows_per_page:rows_per_page*2]
+
+        table = doc.add_table(rows=1, cols=8)
+        table.style = 'Table Grid'
+        
+        # 表頭文字置中與加粗
+        headers = ["日期", "項目內容", "金額", "工地"] * 2
+        for i, h in enumerate(headers):
+            cell = table.rows[0].cells[i]
+            cell.text = h
             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
-    total = sum(d['金額'] for d in data)
-    doc.add_paragraph(f"\n總計金額：NT$ {total:,} 元").alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    doc.add_paragraph("-" * 20 + "\n【工地代號索引】").bold = True
-    for name, code in mapping.items():
-        doc.add_paragraph(f"{code} : {name}")
+        # 填入內容
+        last_dl, last_dr = None, None
+        for i in range(len(left_side)):
+            row = table.add_row().cells
+            
+            # 左側
+            d_l = left_side[i]
+            txt_date_l = "" if d_l["日期"] == last_dl else d_l["日期"]
+            last_dl = d_l["日期"]
+            l_vals = [txt_date_l, d_l["內容"], f"{d_l['金額']:,}", mapping[d_l["工地"]]]
+            
+            # 右側
+            r_vals = [""] * 4
+            if i < len(right_side):
+                d_r = right_side[i]
+                txt_date_r = "" if d_r["日期"] == last_dr else d_r["日期"]
+                last_dr = d_r["日期"]
+                r_vals = [txt_date_r, d_r["內容"], f"{d_r['金額']:,}", mapping[d_r["工地"]]]
 
-    output = BytesIO()
-    doc.save(output)
-    output.seek(0)
-    return output
+            for idx, val in enumerate(l_vals + r_vals):
+                row[idx].text = str(val)
+                row[idx].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                row[idx].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
-# --- 下載與資料列表 ---
-if st.session_state.data_list:
-    sorted_list = get_sorted_data(st.session_state.data_list)
-    loc_mapping = get_location_mapping(sorted_list)
-    
-    st.subheader("📊 本月明細預覽")
-    st.table(pd.DataFrame([{
-        "日期": d["日期"], "內容": d["內容"], "金額": d["金額"], "工地": d["工地"]
-    } for d in sorted_list]))
+        # 總計
+        total = sum(d['金額'] for d in data)
+        doc.add_paragraph(f"\n總計金額：NT$ {total:,} 元").alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("⏪ 刪除最後一筆"):
-            st.session_state.data_list.pop()
-            st.rerun()
-    with col2:
-        if st.button("🗑️ 全部清空"):
+        # 自動生成代號索引表
+        doc.add_paragraph("-" * 20)
+        doc.add_paragraph("【工地代號對照索引】").bold = True
+        for name, code in mapping.items():
+            doc.add_paragraph(f"{code} : {name}")
+
+        out = BytesIO()
+        doc.save(out)
+        out.seek(0)
+        return out
+
+    col_del, col_dl = st.columns(2)
+    with col_del:
+        if st.button("🗑️ 清空所有資料"):
             st.session_state.data_list = []
             st.rerun()
-
-    word_file = export_word(sorted_list, loc_mapping)
-    st.download_button(
-        label="📥 下載 A4 垂直排列報表",
-        data=word_file,
-        file_name=f"雜支明細表_{datetime.now().strftime('%m%d')}.docx"
-    )
+    with col_dl:
+        word_file = export_word(sorted_list, loc_mapping)
+        st.download_button(
+            label="📥 下載 Word 報表",
+            data=word_file,
+            file_name=f"雜支明細_{datetime.now().strftime('%m%d')}.docx"
+        )
